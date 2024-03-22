@@ -215,7 +215,6 @@ def make_scores(segments_true: list, segments_pred: list, all_xpaths: list):
 
     return segment_scores
 
-
 # Из Dataset
 html = """
 <html>
@@ -243,3 +242,43 @@ print(make_scores(
     generate_segmentation_str(predicted_xpaths),
     generate_all_xpaths(html)
 ))
+
+class segmentation_metric():
+    def __inti__(self):
+        self.scores = []
+        
+    def add_result(self, item: dict):
+        scores = make_scores(
+            generate_segmentation_str(item["true_xpaths"]),
+            generate_segmentation_str(item["pred_xpaths"]),
+            generate_all_xpaths(item["html"])
+        )
+        
+        self.scores += scores
+    
+    def precision(item: dict):
+        return item["TP"] / (item["TP"] + item["FP"])
+    
+    def recall(item: dict):
+        return item["TP"] / (item["TP"] + item["FN"])
+
+    def avg_precision(precisions: list):
+        return sum(precisions) / len(precisions)
+    
+    def avg_recall(recalls: list):
+        return sum(recalls) / len(recalls)
+
+    def avg_f1(avg_recall, avg_precision):
+        return 2 * (avg_precision * avg_recall) / (avg_precision * avg_recall)
+        
+    def get_metric(self):
+        avg_precision = self.avg_precision(self.scores)
+        avg_recall = self.avg_recall(self.scores)
+        avg_f1 = self.avg_f1(avg_recall=avg_recall, 
+                             avg_precision=avg_precision)
+        
+        return {"avg_precision" : avg_precision,
+                "avg_recall": avg_recall,
+                "avg_f1": avg_f1}
+
+    
