@@ -1,5 +1,6 @@
 from lxml import html, etree
 from bs4 import BeautifulSoup
+from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 
 def xpath_soup(element):
     '''
@@ -24,7 +25,7 @@ def xpath_soup(element):
 
 def generate_all_xpaths(html: str):
     soup = BeautifulSoup(html, 'html.parser')
-    elems = soup.find_all()
+    elems = soup.find_all(True)
     xpaths = []
     for elem in elems:
         xpaths.append(xpath_soup(elem))
@@ -112,14 +113,43 @@ def generate_segmentation(html: str, xpaths: list):
 # print(list(generate_segmentation(html, xpaths)))
 
 
-def str_prefix(parsed_string: list, prefix: int):
-    return "/".join(parsed_string[:prefix])
+
+def compute_ARI_NMI(segments_true: list, segments_pred: list, all_xpaths: list):
+    all_xpaths = [xpath.split('/') for xpath in all_xpaths]
+    segments_true = [true_segment.split('/') for true_segment in segments_true]
+    segments_pred = [predict.split('/') for predict in segments_pred]
+
+    true_labels = []
+    predicted_labels = []
+    for xpath in all_xpaths:
+        for num, segment in enumerate(segments_true):
+                if path_contains(segment, xpath):
+                    true_labels.append(num)
+                    break
+        else:
+            true_labels.append(-1)
+
+    for xpath in all_xpaths:
+        for num, segment in enumerate(segments_pred):
+                if path_contains(segment, xpath):
+                    predicted_labels.append(num)
+                    break
+        else:
+            predicted_labels.append(-1) 
+
+    
+    return {"ARI" : adjusted_rand_score(true_labels, predicted_labels),
+            "NMI" : normalized_mutual_info_score(true_labels, predicted_labels)}
+
+def str_prefix(parsed_string: list, prefix_len: int):
+    return "/".join(parsed_string[:prefix_len])
 
 
 def generate_segmentation_str(xpaths: list):
     '''
         Эта функция берет список строк xpath и для каждого xpath находит такой минимальный префикс,
         что он не содержит других элементов списка
+        Возвращает список уникальных префиксов
     '''
     xpaths = [xpath.split('/') for xpath in xpaths]
     unique_xpaths = []
@@ -144,18 +174,11 @@ def generate_segmentation_str(xpaths: list):
         else:
             prefix = str_prefix(xpath, None)
             unique_xpaths.append(prefix)
-            break
 
     return unique_xpaths
 
 
-# segments = generate_segmentation_str(xpaths)
-
-# for i in range(len(segments)):
-#     print(xpaths[i], segments[i])
-
-
-def path_contains(x: list, y: list):
+def path_contains(x: list, y: list) -> bool:
     '''
         True if x contains y
     '''
@@ -200,7 +223,7 @@ def make_scores(segments_true: list, segments_pred: list, all_xpaths: list):
     segment_scores = []
     for true_segment in segments_true:
         for predict in segments_pred:
-            if path_contains(predict, true_segment):
+            if len(path_intersection(predict, true_segment, all_xpaths)) != 0:
                 TP = len(path_intersection(predict, true_segment, all_xpaths))
                 FP = len(path_minus(predict, true_segment, all_xpaths))
                 FN = len(path_minus(true_segment, predict, all_xpaths))
@@ -216,69 +239,114 @@ def make_scores(segments_true: list, segments_pred: list, all_xpaths: list):
     return segment_scores
 
 # Из Dataset
-html = """
-<html>
-<body>
-<div>
-    <p id="unique1">Уникальный параграф 1</p>
-</div>
-<div>
-    <div>
-        <p id="unique2">Уникальный параграф 2</p>
-    </div>
-</div>
-<p id="unique3">Уникальный параграф 3</p>
-</body>
-</html>
-"""
-# Из Markup
-predicted_xpaths = ["/html/body/div[1]/p", "/html/body/div[2]/div/p"]
-# Из Dataset
-labeled_xpaths = ["/html/body/div[1]/p", "/html/body/div[2]/div/p", "/html/body/p"]
-# Пример использования
+# html = """
+# <html>
+# <body>
+# <div>
+#     <p id="unique1">Уникальный параграф 1</p>
+# </div>
+# <div>
+#     <div>
+#         <p id="unique2">Уникальный параграф 2</p>
+#     </div>
+# </div>
+# <p id="unique3">Уникальный параграф 3</p>
+# </body>
+# </html>
+# """
+# # Из Markup
+# predicted_xpaths = ["/html/body/div[1]/p", "/html/body/div[2]/div/p"]
+# # Из Dataset
+# labeled_xpaths = ["/html/body/div[1]/p", "/html/body/div[2]/div/p", "/html/body/p"]
+# # Пример использования
 
-print(make_scores(
-    generate_segmentation_str(labeled_xpaths),
-    generate_segmentation_str(predicted_xpaths),
-    generate_all_xpaths(html)
-))
+# print(make_scores(
+#     generate_segmentation_str(labeled_xpaths),
+#     generate_segmentation_str(predicted_xpaths),
+#     generate_all_xpaths(html)
+# ))
 
 class segmentation_metric():
-    def __inti__(self):
-        self.scores = []
+    def __init__(self):
+        self.scores = list()
+        self.ARI_NMI = list()
         
     def add_result(self, item: dict):
-        scores = make_scores(
-            generate_segmentation_str(item["true_xpaths"]),
-            generate_segmentation_str(item["pred_xpaths"]),
-            generate_all_xpaths(item["html"])
+        new_scores = make_scores(
+            segments_true = generate_segmentation_str(item["true_xpaths"]),
+            segments_pred = generate_segmentation_str(item["pred_xpaths"]),
+            # all_xpaths = generate_all_xpaths(item["html"])
+            all_xpaths = item["all_xpaths"]
         )
-        
-        self.scores += scores
+
+        new_ARI_NMI = compute_ARI_NMI(
+            segments_true = generate_segmentation_str(item["true_xpaths"]),
+            segments_pred = generate_segmentation_str(item["pred_xpaths"]),
+            # all_xpaths = generate_all_xpaths(item["html"])
+            all_xpaths = item["all_xpaths"]
+        )
+
+        # with open("true", "w") as f:
+        #     print(*item["true_xpaths"], sep="\n", file = f)
+
+        # with open("pred", "w") as f:
+        #     print(*item["pred_xpaths"], sep="\n", file = f)
+
+        # with open("full", "w") as f:
+        #     print(*generate_all_xpaths(item["html"]), sep="\n", file = f)
+
+        # if new_ARI_NMI["ARI"] == 0:
+        #     print("zero")
+        # while(True):
+        #     pass
+
+        self.scores += new_scores
+        self.ARI_NMI.append(new_ARI_NMI)
     
-    def precision(item: dict):
+    def precision(self, item: dict, zero_division=0):
+        if (item["TP"] + item["FP"]) == 0:
+            return 0
         return item["TP"] / (item["TP"] + item["FP"])
     
-    def recall(item: dict):
+    def recall(self, item: dict):
+        if (item["TP"] + item["FN"]) == 0:
+            return 0
         return item["TP"] / (item["TP"] + item["FN"])
 
-    def avg_precision(precisions: list):
+    def avg_precision(self, precisions: list):
         return sum(precisions) / len(precisions)
     
-    def avg_recall(recalls: list):
+    def avg_recall(self, recalls: list):
         return sum(recalls) / len(recalls)
 
-    def avg_f1(avg_recall, avg_precision):
-        return 2 * (avg_precision * avg_recall) / (avg_precision * avg_recall)
+    def avg_f1(self, avg_recall, avg_precision):
+        return 2 * (avg_precision * avg_recall) / (avg_precision + avg_recall)
         
+    def avg_NMI(self):
+        NMIs = [score["NMI"] for score in self.ARI_NMI]
+        return sum(NMIs) / len(NMIs)
+    
+    def avg_ARI(self):
+        ARIs = [score["ARI"] for score in self.ARI_NMI]
+        return sum(ARIs) / len(ARIs)
+
     def get_metric(self):
-        avg_precision = self.avg_precision(self.scores)
-        avg_recall = self.avg_recall(self.scores)
+        precisions = [self.precision(score) for score in self.scores]
+        recalls = [self.recall(score) for score in self.scores]
+
+        avg_precision = self.avg_precision(precisions)
+        avg_recall = self.avg_recall(recalls)
         avg_f1 = self.avg_f1(avg_recall=avg_recall, 
                              avg_precision=avg_precision)
         
+        avg_NMI = self.avg_NMI()
+        avg_ARI = self.avg_ARI()
+        
+        
         return {"avg_precision" : avg_precision,
                 "avg_recall": avg_recall,
-                "avg_f1": avg_f1}
+                "avg_f1": avg_f1,
+                "avg_NMI" : avg_NMI,
+                "avg_ARI" : avg_ARI}
 
     
